@@ -31,9 +31,8 @@ def get_default_values(date):
     """日付に基づいてデフォルト値を設定"""
     date_obj = pd.to_datetime(date)
     month = date_obj.month
-    weekday = date_obj.weekday()
     
-    # 季節による調整
+    # 季節による調整のみを残す
     if month in [12, 1, 2]:  # 冬季
         total_outpatient = 720  # 600 * 1.2
         er_patients = 26       # 20 * 1.3
@@ -43,18 +42,6 @@ def get_default_values(date):
     else:  # 春秋
         total_outpatient = 600
         er_patients = 20
-    
-    # 曜日による調整
-    if weekday >= 5:  # 土日
-        total_outpatient *= 0.5
-        er_patients *= 1.2
-    
-    # 月初めと月末の調整
-    day = date_obj.day
-    if day <= 5:  # 月初め
-        total_outpatient *= 1.1
-    elif day >= 25:  # 月末
-        total_outpatient *= 0.9
     
     return {
         'total_outpatient': int(total_outpatient),
@@ -70,9 +57,43 @@ def index():
 @main.route('/monthly_calendar')
 def monthly_calendar():
     today = datetime.now()
+    year = request.args.get('year', type=int, default=today.year)
+    month = request.args.get('month', type=int, default=today.month)
+    
+    # 月の最初の日と最後の日を取得
+    first_day = datetime(year, month, 1)
+    
+    # 月の最後の日を計算（12月の場合は特別処理）
+    if month == 12:
+        last_day = datetime(year + 1, 1, 1) - timedelta(days=1)
+    else:
+        last_day = datetime(year, month + 1, 1) - timedelta(days=1)
+    
+    # 月間予測を生成
+    monthly_predictions = {}
+    current_date = first_day
+    while current_date <= last_day:
+        date_str = current_date.strftime('%Y-%m-%d')
+        # デフォルト値を使用して予測を実行
+        default_values = get_default_values(date_str)
+        prediction = prediction_model.predict(
+            date=date_str,
+            total_outpatient=default_values['total_outpatient'],
+            intro_outpatient=default_values['intro_outpatient'],
+            er_patients=default_values['er_patients'],
+            bed_count=default_values['bed_count']
+        )
+        monthly_predictions[date_str] = {
+            'level': prediction['evaluation']['level'],
+            'color': prediction['evaluation']['color'],
+            'label': prediction['evaluation']['label']
+        }
+        current_date += timedelta(days=1)
+    
     return render_template('monthly_calendar.html',
-                         current_year=today.year,
-                         current_month=today.month)
+                         current_year=year,
+                         current_month=month,
+                         monthly_predictions=monthly_predictions)
 
 @main.route('/data_analysis')
 def data_analysis():
@@ -90,13 +111,13 @@ def predict():
             
             # 入力データの取得
             date = data.get('prediction_date')
-            total_outpatient = int(data.get('total_outpatient'))
-            intro_outpatient = int(data.get('intro_outpatient'))
-            er_patients = int(data.get('er_patients'))
-            bed_count = int(data.get('bed_count'))
-
-            # RandomForestモデルで当日の予測を実行
-            rf_result = prediction_model.predict(
+            total_outpatient = data.get('total_outpatient', 600)
+            intro_outpatient = data.get('intro_outpatient', 30)
+            er_patients = data.get('er_patients', 20)
+            bed_count = data.get('bed_count', 300)
+            
+            # RandomForestモデルで当日予測を実行
+            result = prediction_model.predict_daily(
                 date=date,
                 total_outpatient=total_outpatient,
                 intro_outpatient=intro_outpatient,
@@ -104,57 +125,13 @@ def predict():
                 bed_count=bed_count
             )
 
-            if rf_result['status'] != 'success':
-                return jsonify(rf_result)
-
-            # Prophetモデルで週間予測を実行
-            prophet_model_path = os.path.join(os.path.dirname(__file__), '..', 'prophet_model.joblib')
-            if os.path.exists(prophet_model_path):
-                prophet_model = joblib.load(prophet_model_path)
-                
-                # 週間の日付を生成
-                future_dates = pd.DataFrame({
-                    'ds': pd.date_range(start=date, periods=7, freq='D')
-                })
-                
-                # 予測を実行
-                forecast = prophet_model.predict(future_dates)
-                
-                # 週間予測結果を整形
-                weekly_predictions = []
-                for i in range(7):
-                    weekly_predictions.append({
-                        'date': future_dates['ds'].iloc[i].strftime('%Y-%m-%d'),
-                        'value': round(forecast['yhat'].iloc[i], 1),
-                        'lower_bound': round(forecast['yhat_lower'].iloc[i], 1),
-                        'upper_bound': round(forecast['yhat_upper'].iloc[i], 1)
-                    })
-            else:
-                # Prophetモデルが存在しない場合は、RandomForestモデルで代用
-                weekly_predictions = []
-                base_date = pd.to_datetime(date)
-                for i in range(7):
-                    future_date = base_date + pd.Timedelta(days=i)
-                    future_result = prediction_model.predict(
-                        date=future_date.strftime('%Y-%m-%d'),
-                        total_outpatient=total_outpatient,
-                        intro_outpatient=intro_outpatient,
-                        er_patients=er_patients,
-                        bed_count=bed_count
-                    )
-                    if future_result['status'] == 'success':
-                        prediction_value = future_result['prediction']
-                        weekly_predictions.append({
-                            'date': future_date.strftime('%Y-%m-%d'),
-                            'value': round(prediction_value, 1),
-                            'lower_bound': round(prediction_value * 0.9, 1),  # 簡易的な信頼区間
-                            'upper_bound': round(prediction_value * 1.1, 1)
-                        })
+            if result['status'] != 'success':
+                return jsonify(result)
 
             return jsonify({
                 'status': 'success',
-                'prediction': rf_result['prediction'],
-                'weekly_predictions': weekly_predictions
+                'prediction': result['daily_prediction'],
+                'evaluation': result['evaluation']
             })
 
         except Exception as e:
@@ -204,7 +181,7 @@ def get_monthly_predictions():
                     'value': None,
                     'level': 'prev-month',
                     'is_holiday': False,
-                    'weekday': int(prev_date.strftime("%w"))  # 0: 日曜日, 6: 土曜日
+                    'weekday': int(prev_date.strftime("%w"))
                 })
         
         # 当月の日付を追加
@@ -215,27 +192,21 @@ def get_monthly_predictions():
             # 祝日かどうかをチェック
             is_holiday = current_date.strftime('%Y-%m-%d') in holidays
             
-            # デフォルト値を取得
-            defaults = get_default_values(current_date)
-            
-            # 予測モデルを使用して予測を実行
-            result = prediction_model.predict(
+            # Prophetモデルで週間予測を実行
+            result = prediction_model.predict_weekly(
                 date=current_date.strftime('%Y-%m-%d'),
-                total_outpatient=defaults['total_outpatient'],
-                intro_outpatient=defaults['intro_outpatient'],
-                er_patients=defaults['er_patients'],
-                bed_count=defaults['bed_count']
+                bed_count=300
             )
             
             if result['status'] == 'success':
-                prediction = result['prediction']
+                prediction = result['daily_prediction']
                 predictions_list.append(prediction)
                 calendar_days.append({
                     'date': current_date.day,
                     'value': round(prediction, 1),
                     'level': 'pending',
                     'is_holiday': is_holiday,
-                    'weekday': int(current_date.strftime("%w"))  # 0: 日曜日, 6: 土曜日
+                    'weekday': int(current_date.strftime("%w"))
                 })
             
             current_date += timedelta(days=1)

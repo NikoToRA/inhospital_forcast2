@@ -15,11 +15,11 @@ class PredictionModel:
         self.load_models()
         # 5段階評価の基準値を設定
         self.inpatient_levels = {
-            'very_high': {'min': 30, 'color': 'danger', 'label': '多い'},
-            'high': {'min': 25, 'color': 'warning', 'label': 'やや多い'},
-            'normal': {'min': 20, 'color': 'success', 'label': '標準'},
-            'low': {'min': 15, 'color': 'info', 'label': 'やや少ない'},
-            'very_low': {'min': 0, 'color': 'secondary', 'label': '少ない'}
+            'very_high': {'min': 35, 'color': 'danger', 'label': '非常に多い'},
+            'high': {'min': 30, 'color': 'warning', 'label': '多い'},
+            'normal': {'min': 25, 'color': 'success', 'label': '標準'},
+            'low': {'min': 21, 'color': 'info', 'label': '少ない'},
+            'very_low': {'min': 0, 'color': 'secondary', 'label': '非常に少ない'}
         }
         # 曜日名の定義を追加
         self.weekday_names = {
@@ -116,106 +116,62 @@ class PredictionModel:
     def predict(self, date, total_outpatient, intro_outpatient, er_patients, bed_count):
         """予測を実行"""
         try:
-            if self.rf_model is None:
-                print("RandomForestモデルが読み込まれていません")
+            if self.prophet_model is None:
+                print("Prophetモデルが読み込まれていません")
                 return {
                     'status': 'error',
-                    'message': 'RandomForestモデルが読み込まれていません'
+                    'message': 'Prophetモデルが読み込まれていません'
                 }
             
             # 日付をdatetime型に変換
             date_obj = pd.to_datetime(date)
-            weekday = date_obj.dayofweek  # 0=月曜日, 6=日曜日
             
-            # 入力値の妥当性チェックと調整
-            typical_values = {
-                0: {'total_outpatient': 600, 'intro_outpatient': 15, 'er_patients': 15},  # 月曜日
-                1: {'total_outpatient': 550, 'intro_outpatient': 12, 'er_patients': 12},  # 火曜日
-                2: {'total_outpatient': 650, 'intro_outpatient': 14, 'er_patients': 13},  # 水曜日
-                3: {'total_outpatient': 500, 'intro_outpatient': 12, 'er_patients': 12},  # 木曜日
-                4: {'total_outpatient': 600, 'intro_outpatient': 13, 'er_patients': 14},  # 金曜日
-                5: {'total_outpatient': 200, 'intro_outpatient': 5, 'er_patients': 15},   # 土曜日
-                6: {'total_outpatient': 30, 'intro_outpatient': 2, 'er_patients': 12}     # 日曜日
-            }
+            # 未来の日付を予測（7日分）
+            future_dates = pd.DataFrame({
+                'ds': [date_obj + timedelta(days=i) for i in range(7)]
+            })
             
-            # 入力値が通常範囲から大きく外れている場合の警告
-            typical = typical_values[weekday]
-            warnings = []
-            if total_outpatient < typical['total_outpatient'] * 0.3:
-                warnings.append(f"外来患者数が{self.weekday_names[weekday]}の通常値（{typical['total_outpatient']}人程度）より大幅に少なくなっています")
-            if intro_outpatient < typical['intro_outpatient'] * 0.3:
-                warnings.append(f"紹介患者数が{self.weekday_names[weekday]}の通常値（{typical['intro_outpatient']}人程度）より大幅に少なくなっています")
+            # Prophetモデルで予測を実行
+            forecast = self.prophet_model.predict(future_dates)
             
-            # テストデータの生成
-            test_data = self.create_test_data(date, total_outpatient, intro_outpatient, er_patients, bed_count)
-            if test_data is None:
-                return {
-                    'status': 'error',
-                    'message': 'テストデータの生成に失敗しました'
-                }
-            
-            # RandomForestモデルで当日の予測を実行
-            daily_prediction = self.rf_model.predict(test_data)[0]
-            print(f"当日予測値（RandomForest）: {daily_prediction}")
-            print(f"入力値 - 外来患者数: {total_outpatient}, 紹介患者数: {intro_outpatient}, ER患者数: {er_patients}, ベッド数: {bed_count}")
-            
-            # 予測値の調整（極端に低い入力値の場合）
-            if warnings and weekday in [0, 1, 2, 3, 4]:  # 平日の場合
-                adjustment_factor = (total_outpatient / typical['total_outpatient'] + 
-                                  intro_outpatient / typical['intro_outpatient']) / 2
-                if adjustment_factor < 0.3:  # 入力値が通常の30%未満
-                    daily_prediction = daily_prediction * (1 + (0.3 - adjustment_factor))
-            
-            # 当日の予測値を5段階評価
-            evaluation = self.evaluate_inpatient_level(daily_prediction)
-            
-            # Prophetモデルで週間予測を実行
+            # 予測結果を処理
+            daily_prediction = forecast.iloc[0]['yhat']
             weekly_predictions = []
-            base_date = pd.to_datetime(date)
             
-            if self.prophet_model is not None:
-                # Prophetモデルを使用した週間予測
-                future_dates = pd.DataFrame({
-                    'ds': [base_date + timedelta(days=i) for i in range(7)]
-                })
-                prophet_forecast = self.prophet_model.predict(future_dates)
+            for i in range(7):
+                current_date = date_obj + timedelta(days=i)
+                prophet_pred = forecast.iloc[i]['yhat']
+                prophet_lower = forecast.iloc[i]['yhat_lower']
+                prophet_upper = forecast.iloc[i]['yhat_upper']
                 
-                # 週間予測の結果を処理
-                for i in range(7):
-                    current_date = base_date + timedelta(days=i)
-                    # Prophetの予測値を取得
-                    prophet_pred = prophet_forecast.iloc[i]['yhat']
-                    prophet_lower = prophet_forecast.iloc[i]['yhat_lower']
-                    prophet_upper = prophet_forecast.iloc[i]['yhat_upper']
-                    
-                    # 予測値が現実的な範囲内に収まるように調整
-                    prophet_pred = max(0, min(prophet_pred, bed_count))
-                    prophet_lower = max(0, min(prophet_lower, bed_count))
-                    prophet_upper = max(0, min(prophet_upper, bed_count))
-                    
-                    evaluation_weekly = self.evaluate_inpatient_level(prophet_pred)
-                    weekly_predictions.append({
-                        'date': current_date.strftime('%Y-%m-%d'),
-                        'predicted_inpatients': int(prophet_pred),
-                        'lower_bound': int(prophet_lower),
-                        'upper_bound': int(prophet_upper),
-                        'level': evaluation_weekly['level'],
-                        'color': evaluation_weekly['color'],
-                        'label': evaluation_weekly['label']
-                    })
+                # 予測値が現実的な範囲内に収まるように調整
+                prophet_pred = max(0, min(prophet_pred, bed_count))
+                prophet_lower = max(0, min(prophet_lower, bed_count))
+                prophet_upper = max(0, min(prophet_upper, bed_count))
+                
+                evaluation = self.evaluate_inpatient_level(prophet_pred)
+                weekly_predictions.append({
+                    'date': current_date.strftime('%Y-%m-%d'),
+                    'predicted_inpatients': round(prophet_pred, 1),
+                    'lower_bound': round(prophet_lower, 1),
+                    'upper_bound': round(prophet_upper, 1),
+                    'level': evaluation['level'],
+                    'color': evaluation['color'],
+                    'label': evaluation['label']
+                })
             
             return {
                 'status': 'success',
-                'daily_prediction': int(daily_prediction),
-                'evaluation': evaluation,
-                'weekly_predictions': weekly_predictions,
-                'warnings': warnings if warnings else None
+                'daily_prediction': round(daily_prediction, 1),
+                'evaluation': self.evaluate_inpatient_level(daily_prediction),
+                'weekly_predictions': weekly_predictions
             }
+            
         except Exception as e:
             print(f"Error in prediction: {str(e)}")
             return {
                 'status': 'error',
-                'message': str(e)
+                'message': f'予測中にエラーが発生しました: {str(e)}'
             }
 
     def retrain_model(self):

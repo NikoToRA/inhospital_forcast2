@@ -24,8 +24,8 @@
                        href="{{ url_for('main.index') }}">単一予測</a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link {% if request.endpoint == 'main.calendar' %}active{% endif %}" 
-                       href="{{ url_for('main.calendar') }}">月間カレンダー</a>
+                    <a class="nav-link {% if request.endpoint == 'main.monthly_calendar' %}active{% endif %}" 
+                       href="{{ url_for('main.monthly_calendar') }}">月間カレンダー</a>
                 </li>
                 <li class="nav-item">
                     <a class="nav-link {% if request.endpoint == 'main.scenario_comparison' %}active{% endif %}" 

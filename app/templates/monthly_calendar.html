@@ -31,11 +31,11 @@
             <div class="mt-3">
                 <h6>凡例</h6>
                 <div class="d-flex flex-wrap gap-2">
-                    <span class="badge bg-danger">多い（30人以上）</span>
-                    <span class="badge bg-warning">やや多い（25-29人）</span>
-                    <span class="badge bg-success">標準（20-24人）</span>
-                    <span class="badge bg-info">やや少ない（15-19人）</span>
-                    <span class="badge bg-secondary">少ない（15人未満）</span>
+                    <span class="badge bg-danger">非常に多い（35人以上）</span>
+                    <span class="badge bg-warning">多い（30-34人）</span>
+                    <span class="badge bg-success">標準（25-29人）</span>
+                    <span class="badge bg-info">少ない（21-24人）</span>
+                    <span class="badge bg-secondary">非常に少ない（20人以下）</span>
                 </div>
             </div>
         </div>
@@ -110,7 +110,21 @@ function updateCalendar() {
 }
 
 function changeMonth(delta) {
-    window.location.href = `/calendar?year=${currentYear}&month=${currentMonth + delta}`;
+    let newYear = currentYear;
+    let newMonth = currentMonth + delta;
+    
+    // 月が12を超えた場合の処理
+    if (newMonth > 12) {
+        newMonth = 1;
+        newYear += 1;
+    }
+    // 月が1未満になった場合の処理
+    if (newMonth < 1) {
+        newMonth = 12;
+        newYear -= 1;
+    }
+    
+    window.location.href = `/monthly_calendar?year=${newYear}&month=${newMonth}`;
 }
 
 // 初期表示
