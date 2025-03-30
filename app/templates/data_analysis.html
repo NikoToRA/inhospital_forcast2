@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <h2>データ分析</h2>
+    <div class="analysis-section">
+        <h3>季節トレンド分析</h3>
+        <div id="seasonal-trend-chart"></div>
+    </div>
+    <div class="analysis-section">
+        <h3>曜日別分析</h3>
+        <div id="weekday-analysis-chart"></div>
+    </div>
+    <div class="analysis-section">
+        <h3>月別分析</h3>
+        <div id="monthly-analysis-chart"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+<script>
+    // 季節トレンドのデータを取得して表示
+    fetch('/get_seasonal_trends')
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                const layout = {
+                    title: '季節別入院患者数推移',
+                    xaxis: { title: '月' },
+                    yaxis: { title: '入院患者数' }
+                };
+                Plotly.newPlot('seasonal-trend-chart', data.data, layout);
+            }
+        });
+
+    // 曜日別分析のデータを取得して表示
+    fetch('/get_weekday_analysis')
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                const layout = {
+                    title: '曜日別入院患者数',
+                    xaxis: { title: '曜日' },
+                    yaxis: { title: '入院患者数' }
+                };
+                Plotly.newPlot('weekday-analysis-chart', data.data, layout);
+            }
+        });
+
+    // 月別分析のデータを取得して表示
+    fetch('/get_monthly_analysis')
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                const layout = {
+                    title: '月別入院患者数',
+                    xaxis: { title: '月' },
+                    yaxis: { title: '入院患者数' }
+                };
+                Plotly.newPlot('monthly-analysis-chart', data.data, layout);
+            }
+        });
+</script>
+{% endblock %} 

@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <h2>シナリオ比較</h2>
+    <div class="scenario-form">
+        <h3>シナリオ設定</h3>
+        <form id="scenario-form">
+            <div class="form-group">
+                <label for="base-date">基準日:</label>
+                <input type="date" id="base-date" name="base-date" required>
+            </div>
+            <div class="form-group">
+                <label for="scenario-count">シナリオ数:</label>
+                <select id="scenario-count" name="scenario-count" required>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                    <option value="4">4</option>
+                </select>
+            </div>
+            <div id="scenario-inputs">
+                <!-- シナリオ入力フィールドが動的に追加されます -->
+            </div>
+            <button type="submit" class="btn btn-primary">比較実行</button>
+        </form>
+    </div>
+    <div class="comparison-results">
+        <h3>比較結果</h3>
+        <div id="comparison-chart"></div>
+        <div id="comparison-table"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+<script>
+    // シナリオ入力フィールドの動的生成
+    function updateScenarioInputs() {
+        const count = parseInt(document.getElementById('scenario-count').value);
+        const container = document.getElementById('scenario-inputs');
+        container.innerHTML = '';
+        
+        for (let i = 0; i < count; i++) {
+            const scenarioDiv = document.createElement('div');
+            scenarioDiv.className = 'scenario-input';
+            scenarioDiv.innerHTML = `
+                <h4>シナリオ ${i + 1}</h4>
+                <div class="form-group">
+                    <label for="total-outpatient-${i}">外来患者総数:</label>
+                    <input type="number" id="total-outpatient-${i}" name="total-outpatient-${i}" required>
+                </div>
+                <div class="form-group">
+                    <label for="intro-outpatient-${i}">紹介外来患者数:</label>
+                    <input type="number" id="intro-outpatient-${i}" name="intro-outpatient-${i}" required>
+                </div>
+                <div class="form-group">
+                    <label for="er-patients-${i}">救急外来患者数:</label>
+                    <input type="number" id="er-patients-${i}" name="er-patients-${i}" required>
+                </div>
+                <div class="form-group">
+                    <label for="bed-count-${i}">病床数:</label>
+                    <input type="number" id="bed-count-${i}" name="bed-count-${i}" required>
+                </div>
+            `;
+            container.appendChild(scenarioDiv);
+        }
+    }
+
+    // シナリオ数の変更を監視
+    document.getElementById('scenario-count').addEventListener('change', updateScenarioInputs);
+
+    // フォーム送信時の処理
+    document.getElementById('scenario-form').addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        const baseDate = document.getElementById('base-date').value;
+        const count = parseInt(document.getElementById('scenario-count').value);
+        const scenarios = [];
+        
+        for (let i = 0; i < count; i++) {
+            scenarios.push({
+                total_outpatient: parseInt(document.getElementById(`total-outpatient-${i}`).value),
+                intro_outpatient: parseInt(document.getElementById(`intro-outpatient-${i}`).value),
+                er_patients: parseInt(document.getElementById(`er-patients-${i}`).value),
+                bed_count: parseInt(document.getElementById(`bed-count-${i}`).value)
+            });
+        }
+        
+        // シナリオ比較の実行
+        fetch('/compare_scenarios', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                base_date: baseDate,
+                scenarios: scenarios
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                // グラフの表示
+                const layout = {
+                    title: 'シナリオ比較結果',
+                    xaxis: { title: '日付' },
+                    yaxis: { title: '入院患者数' }
+                };
+                Plotly.newPlot('comparison-chart', data.data, layout);
+                
+                // テーブルの表示
+                const table = document.getElementById('comparison-table');
+                table.innerHTML = data.table_html;
+            }
+        });
+    });
+
+    // 初期表示
+    updateScenarioInputs();
+</script>
+{% endblock %} 
