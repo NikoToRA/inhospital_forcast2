@@ -1,19 +1,23 @@
 from datetime import datetime, timedelta
 from supabase import create_client, Client
-from config import SUPABASE_URL, SUPABASE_KEY
+from config import Config
 import traceback
 import jpholiday  # 日本の祝日判定用
+import os
 
 def init_supabase() -> Client:
     """Supabaseクライアントの初期化とテスト"""
     try:
-        if not SUPABASE_URL or not SUPABASE_KEY:
+        if not Config.SUPABASE_URL or not Config.SUPABASE_KEY:
             raise ValueError("Supabase credentials not found in environment variables")
         
-        print(f"Supabase URL: {SUPABASE_URL[:20]}...")  # URLの一部のみを表示
+        print(f"Supabase URL: {Config.SUPABASE_URL[:20]}...")  # URLの一部のみを表示
         
         # クライアントの作成
-        client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        client = create_client(
+            Config.SUPABASE_URL,
+            Config.SUPABASE_KEY
+        )
         
         # 接続テスト
         try:
@@ -70,37 +74,14 @@ def add_training_data(date, mon, tue, wed, thu, fri, sat, sun, public_holiday, p
         return None
 
 def get_training_data():
-    """トレーニングデータの取得"""
-    try:
-        # ページネーションを使用してすべてのデータを取得
-        all_data = []
-        page = 0
-        while True:
-            response = supabase.table('training_data').select("*").order('date').range(page * 1000, (page + 1) * 1000 - 1).execute()
-            if not response.data:
-                break
-            all_data.extend(response.data)
-            page += 1
-            print(f"データ取得: {len(all_data)}件")  # デバッグ出力
-        return all_data
-    except Exception as e:
-        print(f"Error getting training data: {e}")
-        return []
+    """トレーニングデータを取得"""
+    response = supabase.table('hospital_data').select('*').execute()
+    return response.data
 
-def add_model_metrics(date, mse, mae, prediction_count):
-    """モデルの評価指標の保存"""
-    try:
-        data = {
-            'date': date,
-            'mse': mse,
-            'mae': mae,
-            'prediction_count': prediction_count
-        }
-        response = supabase.table('model_metrics').insert(data).execute()
-        return response.data
-    except Exception as e:
-        print(f"Error adding model metrics: {e}")
-        return None
+def add_model_metrics(metrics):
+    """モデルのメトリクスを保存"""
+    response = supabase.table('model_metrics').insert(metrics).execute()
+    return response.data
 
 def get_model_metrics():
     """モデルの評価指標の取得"""
