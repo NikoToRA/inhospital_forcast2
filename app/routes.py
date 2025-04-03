@@ -9,6 +9,8 @@ import calendar
 import os
 import joblib
 from prophet import Prophet
+import jpholiday
+from .database import get_training_data, add_model_metrics, save_input_data
 
 main = Blueprint('main', __name__)
 
@@ -17,31 +19,34 @@ prediction_model = PredictionModel()
 
 def get_japanese_holidays(year):
     """日本の祝日を取得"""
-    try:
-        response = requests.get(f'https://holidays-jp.github.io/api/v1/date.json')
-        if response.status_code == 200:
-            holidays = response.json()
-            return {k: v for k, v in holidays.items() if k.startswith(str(year))}
-    except:
-        # エラーの場合は空の辞書を返す
-        pass
-    return {}
+    holidays = {}
+    for holiday in jpholiday.year_holidays(year):
+        date_str = holiday[0].strftime('%Y-%m-%d')
+        name = holiday[1]
+        holidays[date_str] = name
+    return holidays
 
 def get_default_values(date):
     """日付に基づいてデフォルト値を設定"""
     date_obj = pd.to_datetime(date)
     month = date_obj.month
+    weekday = date_obj.dayofweek
     
-    # 季節による調整のみを残す
-    if month in [12, 1, 2]:  # 冬季
-        total_outpatient = 720  # 600 * 1.2
-        er_patients = 26       # 20 * 1.3
-    elif month in [6, 7, 8]:  # 夏季
-        total_outpatient = 540  # 600 * 0.9
-        er_patients = 22       # 20 * 1.1
-    else:  # 春秋
-        total_outpatient = 600
-        er_patients = 20
+    # 曜日による調整
+    if weekday in [5, 6]:  # 土日
+        total_outpatient = 400  # 平日より少ない
+        er_patients = 15       # 平日より少ない
+    else:  # 平日
+        # 季節による調整
+        if month in [12, 1, 2]:  # 冬季
+            total_outpatient = 720  # 600 * 1.2
+            er_patients = 26       # 20 * 1.3
+        elif month in [6, 7, 8]:  # 夏季
+            total_outpatient = 540  # 600 * 0.9
+            er_patients = 22       # 20 * 1.1
+        else:  # 春秋
+            total_outpatient = 600
+            er_patients = 20
     
     return {
         'total_outpatient': int(total_outpatient),
@@ -69,31 +74,51 @@ def monthly_calendar():
     else:
         last_day = datetime(year, month + 1, 1) - timedelta(days=1)
     
-    # 月間予測を生成
-    monthly_predictions = {}
-    current_date = first_day
-    while current_date <= last_day:
-        date_str = current_date.strftime('%Y-%m-%d')
-        # デフォルト値を使用して予測を実行
-        default_values = get_default_values(date_str)
-        prediction = prediction_model.predict(
-            date=date_str,
-            total_outpatient=default_values['total_outpatient'],
-            intro_outpatient=default_values['intro_outpatient'],
-            er_patients=default_values['er_patients'],
-            bed_count=default_values['bed_count']
-        )
-        monthly_predictions[date_str] = {
-            'level': prediction['evaluation']['level'],
-            'color': prediction['evaluation']['color'],
-            'label': prediction['evaluation']['label']
-        }
-        current_date += timedelta(days=1)
+    # 祝日情報を取得
+    holidays = get_japanese_holidays(year)
     
-    return render_template('monthly_calendar.html',
-                         current_year=year,
-                         current_month=month,
-                         monthly_predictions=monthly_predictions)
+    # Prophetモデルで月間予測を実行
+    try:
+        # 予測日付の生成
+        future_dates = pd.DataFrame({
+            'ds': pd.date_range(start=first_day, end=last_day, freq='D')
+        })
+        
+        # Prophetモデルで予測を実行
+        forecast = prediction_model.prophet_model.predict(future_dates)
+        
+        # 予測結果を整形
+        monthly_predictions = {}
+        for i, row in forecast.iterrows():
+            date_str = row['ds'].strftime('%Y-%m-%d')
+            prediction = float(row['yhat'])
+            evaluation = prediction_model.evaluate_inpatient_level(prediction)
+            
+            # 祝日情報を追加
+            is_holiday = date_str in holidays
+            holiday_name = holidays.get(date_str, '')
+            
+            monthly_predictions[date_str] = {
+                'level': evaluation['level'],
+                'color': evaluation['color'],
+                'label': evaluation['label'],
+                'prediction': round(prediction, 1),
+                'is_holiday': is_holiday,
+                'holiday_name': holiday_name
+            }
+        
+        return render_template('monthly_calendar.html',
+                             current_year=year,
+                             current_month=month,
+                             monthly_predictions=monthly_predictions)
+                             
+    except Exception as e:
+        print(f"Error in monthly calendar prediction: {str(e)}")
+        return render_template('monthly_calendar.html',
+                             current_year=year,
+                             current_month=month,
+                             monthly_predictions={},
+                             error_message=str(e))
 
 @main.route('/data_analysis')
 def data_analysis():
@@ -105,46 +130,278 @@ def scenario_comparison():
 
 @main.route('/predict', methods=['POST'])
 def predict():
-    if request.method == 'POST':
-        try:
-            data = request.get_json()
-            
-            # 入力データの取得
-            date = data.get('prediction_date')
-            total_outpatient = data.get('total_outpatient', 600)
-            intro_outpatient = data.get('intro_outpatient', 30)
-            er_patients = data.get('er_patients', 20)
-            bed_count = data.get('bed_count', 300)
-            
-            # RandomForestモデルで当日予測を実行
-            result = prediction_model.predict_daily(
-                date=date,
-                total_outpatient=total_outpatient,
-                intro_outpatient=intro_outpatient,
-                er_patients=er_patients,
-                bed_count=bed_count
-            )
-
-            if result['status'] != 'success':
-                return jsonify(result)
-
-            return jsonify({
-                'status': 'success',
-                'prediction': result['daily_prediction'],
-                'evaluation': result['evaluation']
-            })
-
-        except Exception as e:
-            print(f"Error in prediction: {str(e)}")
+    try:
+        # リクエストの詳細をデバッグ出力
+        print("\n=== 予測リクエストの詳細 ===")
+        print(f"Method: {request.method}")
+        print(f"Headers: {dict(request.headers)}")
+        print(f"Content-Type: {request.content_type}")
+        
+        if request.is_json:
+            print("\nJSONデータを処理します")
+            try:
+                data = request.get_json(force=True)
+                print(f"受信したJSONデータ: {data}")
+            except Exception as e:
+                print(f"JSONデータの解析に失敗: {str(e)}")
+                return jsonify({
+                    'status': 'error',
+                    'message': 'JSONデータの解析に失敗しました',
+                    'error_type': 'json_parse_error',
+                    'error_details': str(e)
+                }), 400
+        else:
+            print("\nフォームデータを処理します")
+            data = request.form.to_dict()
+            print(f"受信したフォームデータ: {data}")
+        
+        required_fields = ['date', 'total_outpatient', 'intro_outpatient', 'er_patients', 'bed_count', 'y']
+        
+        # 必須フィールドの存在チェック
+        missing_fields = [field for field in required_fields if field not in data]
+        if missing_fields:
+            error_msg = f'必須フィールドが不足しています: {", ".join(missing_fields)}'
+            print(f"\nエラー: {error_msg}")
+            print(f"受信したデータ: {data}")
             return jsonify({
                 'status': 'error',
-                'message': f'予測中にエラーが発生しました: {str(e)}'
+                'message': error_msg,
+                'error_type': 'missing_fields',
+                'missing_fields': missing_fields,
+                'received_data': data
+            }), 400
+        
+        # データの型変換とバリデーション
+        try:
+            prediction_date = pd.to_datetime(data['date'])
+            input_date = prediction_date - timedelta(days=1)  # 前日の日付を計算
+            
+            # 予測用のデータを準備
+            prediction_data = {
+                'date': str(data['date']),
+                'total_outpatient': int(float(data['total_outpatient'])),
+                'intro_outpatient': int(float(data['intro_outpatient'])),
+                'er_patients': int(float(data['er_patients'])),
+                'bed_count': int(float(data['bed_count']))
+            }
+            
+            # Supabaseに保存するデータを準備（前日のデータとして保存）
+            input_data = {
+                'date': input_date.strftime('%Y-%m-%d'),  # 前日の日付
+                'total_outpatient': int(float(data['total_outpatient'])),  # 外来患者数
+                'intro_outpatient': int(float(data['intro_outpatient'])),  # 紹介患者数
+                'er_patients': int(float(data['er_patients'])),  # 救急搬送患者数
+                'bed_count': int(float(data['bed_count'])),  # 入院患者数
+                'y': int(float(data['y']))  # 新入院患者数
+            }
+            
+            print(f"\n変換後のデータ: {prediction_data}")
+            print(f"Supabaseに保存するデータ（前日）: {input_data}")
+            
+            # 値の範囲チェック
+            validations = [
+                (0 <= prediction_data['total_outpatient'] <= 2000, "外来患者数は0から2000の間である必要があります"),
+                (0 <= prediction_data['intro_outpatient'] <= 200, "紹介患者数は0から200の間である必要があります"),
+                (0 <= prediction_data['er_patients'] <= 100, "救急搬送患者数は0から100の間である必要があります"),
+                (0 <= prediction_data['bed_count'] <= 1000, "入院患者数は0から1000の間である必要があります"),
+                (0 <= int(float(data['y'])) <= 100, "新入院患者数は0から100の間である必要があります")
+            ]
+            
+            for is_valid, error_message in validations:
+                if not is_valid:
+                    print(f"\nバリデーションエラー: {error_message}")
+                    return jsonify({
+                        'status': 'error',
+                        'message': error_message,
+                        'error_type': 'validation_error',
+                        'received_data': data
+                    }), 400
+            
+            # Supabaseにデータを保存
+            try:
+                save_result = save_input_data(input_data)
+                print(f"\nデータを保存しました: {save_result}")
+            except Exception as e:
+                print(f"\nデータ保存中にエラーが発生: {str(e)}")
+                import traceback
+                print(f"スタックトレース:\n{traceback.format_exc()}")
+                # データ保存エラーはログに記録するが、予測は続行する
+            
+            # 予測を実行
+            print("\n予測を実行します")
+            result = prediction_model.predict(**prediction_data)
+            print(f"予測結果: {result}")
+            return jsonify(result)
+            
+        except (ValueError, TypeError) as e:
+            error_msg = f'データの型変換に失敗しました: {str(e)}'
+            print(f"\nエラー: {error_msg}")
+            return jsonify({
+                'status': 'error',
+                'message': error_msg,
+                'error_type': 'type_conversion_error',
+                'error_details': str(e),
+                'received_data': data
+            }), 400
+            
+    except Exception as e:
+        import traceback
+        error_msg = f'予期せぬエラーが発生しました: {str(e)}'
+        print(f"\nエラー: {error_msg}")
+        print(f"スタックトレース:\n{traceback.format_exc()}")
+        return jsonify({
+            'status': 'error',
+            'message': error_msg,
+            'error_type': 'unexpected_error',
+            'error_details': str(e),
+            'stack_trace': traceback.format_exc()
+        }), 500
+
+@main.route('/predict/weekly', methods=['POST'])
+def predict_weekly():
+    """1週間分の予測を実行する（Prophetモデル使用）"""
+    try:
+        print("\n=== 週間予測リクエストの詳細 ===")
+        data = request.get_json()
+        print(f"受信したデータ: {data}")
+        
+        required_fields = ['date', 'bed_count']
+        
+        # 必須フィールドのチェック
+        missing_fields = [field for field in required_fields if field not in data]
+        if missing_fields:
+            error_msg = f'必須フィールドが不足しています: {", ".join(missing_fields)}'
+            print(f"\nエラー: {error_msg}")
+            return jsonify({
+                'status': 'error',
+                'message': error_msg,
+                'error_type': 'missing_fields',
+                'missing_fields': missing_fields
+            }), 400
+
+        try:
+            start_date = pd.to_datetime(data['date'])
+            bed_count = int(data['bed_count'])
+            
+            if not (0 <= bed_count <= 1000):
+                return jsonify({
+                    'status': 'error',
+                    'message': '入院患者数は0から1000の間である必要があります',
+                    'error_type': 'validation_error'
+                }), 400
+                
+            print(f"\n予測期間: {start_date} から 7日間")
+            print(f"入院患者数: {bed_count}")
+            
+            # 7日分の日付を生成
+            future_dates = pd.DataFrame({
+                'ds': [start_date + timedelta(days=i) for i in range(7)]
+            })
+            
+            print("\nProphetモデルで予測を実行")
+            forecast = prediction_model.prophet_model.predict(future_dates)
+            print(f"予測完了: {len(forecast)}件")
+            
+            # 予測結果を整形
+            predictions = []
+            dates = []
+            
+            for _, row in forecast.iterrows():
+                date_str = row['ds'].strftime('%Y-%m-%d')
+                prediction = float(row['yhat'])
+                
+                # 予測値の評価
+                evaluation = prediction_model.evaluate_inpatient_level(prediction)
+                
+                predictions.append({
+                    'date': date_str,
+                    'value': round(prediction, 1),
+                    'level': evaluation['level'],
+                    'color': evaluation['color'],
+                    'label': evaluation['label']
+                })
+                dates.append(date_str)
+            
+            print(f"予測結果: {predictions}")
+            
+            return jsonify({
+                'status': 'success',
+                'predictions': predictions,
+                'dates': dates
+            })
+            
+        except ValueError as e:
+            error_msg = f'データの型変換に失敗しました: {str(e)}'
+            print(f"\nエラー: {error_msg}")
+            return jsonify({
+                'status': 'error',
+                'message': error_msg,
+                'error_type': 'type_conversion_error',
+                'error_details': str(e)
+            }), 400
+            
+    except Exception as e:
+        import traceback
+        error_msg = f'週間予測中にエラーが発生しました: {str(e)}'
+        print(f"\nエラー: {error_msg}")
+        print(f"スタックトレース:\n{traceback.format_exc()}")
+        return jsonify({
+            'status': 'error',
+            'message': error_msg,
+            'error_type': 'prediction_error',
+            'error_details': str(e),
+            'stack_trace': traceback.format_exc()
+        }), 500
+
+@main.route('/update_actual', methods=['POST'])
+def update_actual():
+    """実際の入院患者数を更新"""
+    try:
+        data = request.get_json()
+        date = data.get('date')
+        actual_value = data.get('actual_value')
+
+        if not date or actual_value is None:
+            return jsonify({
+                'status': 'error',
+                'message': '日付と実際の値が必要です'
             })
 
-    return jsonify({
-        'status': 'error',
-        'message': '不正なリクエストです'
-    })
+        # 実際の値を更新
+        if prediction_model.prediction_manager.update_actual_value(date, actual_value):
+            # メトリクスを計算
+            metrics = prediction_model.prediction_manager.calculate_metrics()
+            return jsonify({
+                'status': 'success',
+                'message': '実際の値を更新しました',
+                'metrics': metrics
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': '指定された日付の予測が見つかりません'
+            })
+
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        })
+
+@main.route('/predictions', methods=['GET'])
+def get_predictions():
+    """全ての予測データを取得"""
+    try:
+        predictions = prediction_model.prediction_manager.get_all_predictions()
+        return jsonify({
+            'status': 'success',
+            'predictions': predictions.to_dict(orient='records')
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        })
 
 @main.route('/get_monthly_predictions', methods=['POST'])
 def get_monthly_predictions():
@@ -192,22 +449,21 @@ def get_monthly_predictions():
             # 祝日かどうかをチェック
             is_holiday = current_date.strftime('%Y-%m-%d') in holidays
             
-            # Prophetモデルで週間予測を実行
-            result = prediction_model.predict_weekly(
-                date=current_date.strftime('%Y-%m-%d'),
-                bed_count=300
-            )
+            # Prophetモデルで予測を実行
+            future_dates = pd.DataFrame({
+                'ds': [current_date]
+            })
+            forecast = prediction_model.prophet_model.predict(future_dates)
+            prediction = float(forecast['yhat'].iloc[0])
             
-            if result['status'] == 'success':
-                prediction = result['daily_prediction']
-                predictions_list.append(prediction)
-                calendar_days.append({
-                    'date': current_date.day,
-                    'value': round(prediction, 1),
-                    'level': 'pending',
-                    'is_holiday': is_holiday,
-                    'weekday': int(current_date.strftime("%w"))
-                })
+            predictions_list.append(prediction)
+            calendar_days.append({
+                'date': current_date.day,
+                'value': round(prediction, 1),
+                'level': 'pending',
+                'is_holiday': is_holiday,
+                'weekday': int(current_date.strftime("%w"))
+            })
             
             current_date += timedelta(days=1)
         
@@ -223,7 +479,7 @@ def get_monthly_predictions():
                     'value': None,
                     'level': 'next-month',
                     'is_holiday': False,
-                    'weekday': int(next_date.strftime("%w"))  # 0: 日曜日, 6: 土曜日
+                    'weekday': int(next_date.strftime("%w"))
                 })
         
         # 予測値の統計を計算

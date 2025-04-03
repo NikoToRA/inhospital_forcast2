@@ -1,139 +1,246 @@
-import sqlite3
-import os
-from datetime import datetime
+from datetime import datetime, timedelta
+from supabase import create_client, Client
+from config import SUPABASE_URL, SUPABASE_KEY
+import traceback
+import jpholiday  # 日本の祝日判定用
 
-def get_db_path():
-    """データベースファイルのパスを取得"""
-    return os.path.join(os.path.dirname(__file__), 'data', 'hospital_data.db')
+def init_supabase() -> Client:
+    """Supabaseクライアントの初期化とテスト"""
+    try:
+        if not SUPABASE_URL or not SUPABASE_KEY:
+            raise ValueError("Supabase credentials not found in environment variables")
+        
+        print(f"Supabase URL: {SUPABASE_URL[:20]}...")  # URLの一部のみを表示
+        
+        # クライアントの作成
+        client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        
+        # 接続テスト
+        try:
+            # テーブルの存在確認（training_dataテーブルを使用）
+            test_response = client.table('training_data').select("id").limit(1).execute()
+            print("Supabase connection test successful")
+            print(f"Test query response: {test_response}")
+            return client
+        except Exception as e:
+            print(f"Supabase connection test failed: {str(e)}")
+            print(f"Error type: {type(e)}")
+            print(f"Error details: {traceback.format_exc()}")
+            raise Exception(f"Failed to connect to Supabase: {str(e)}")
+            
+    except Exception as e:
+        print(f"Error initializing Supabase client: {str(e)}")
+        print(f"Error type: {type(e)}")
+        print(f"Error details: {traceback.format_exc()}")
+        raise
 
-def init_db():
-    """データベースの初期化とテーブルの作成"""
-    db_path = get_db_path()
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
+# Supabaseクライアントの初期化
+try:
+    print("\nInitializing Supabase client...")
+    supabase = init_supabase()
+    print("Supabase client initialized successfully")
+except Exception as e:
+    print(f"Failed to initialize Supabase client: {str(e)}")
+    raise
 
-    # training_dataテーブルの作成
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS training_data (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        date DATE NOT NULL,
-        total_outpatient INTEGER NOT NULL,
-        intro_outpatient INTEGER NOT NULL,
-        er_patients INTEGER NOT NULL,
-        bed_count INTEGER NOT NULL,
-        actual_inpatients INTEGER NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-    ''')
-
-    # model_metricsテーブルの作成
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS model_metrics (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        model_name TEXT NOT NULL,
-        mse REAL NOT NULL,
-        mae REAL NOT NULL,
-        r2_score REAL NOT NULL,
-        evaluation_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-    ''')
-
-    # 新規入院患者数の履歴データテーブルの作成
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS inpatient_history (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        date DATE NOT NULL,
-        new_inpatients INTEGER NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-    ''')
-
-    conn.commit()
-    conn.close()
-
-def add_training_data(date, total_outpatient, intro_outpatient, er_patients, bed_count, actual_inpatients):
+def add_training_data(date, mon, tue, wed, thu, fri, sat, sun, public_holiday, public_holiday_previous_day, total_outpatient, intro_outpatient, er, bed_count, y):
     """トレーニングデータの追加"""
-    db_path = get_db_path()
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-
-    cursor.execute('''
-    INSERT INTO training_data (date, total_outpatient, intro_outpatient, er_patients, bed_count, actual_inpatients)
-    VALUES (?, ?, ?, ?, ?, ?)
-    ''', (date, total_outpatient, intro_outpatient, er_patients, bed_count, actual_inpatients))
-
-    conn.commit()
-    conn.close()
+    try:
+        data = {
+            'date': date,
+            'mon': mon,
+            'tue': tue,
+            'wed': wed,
+            'thu': thu,
+            'fri': fri,
+            'sat': sat,
+            'sun': sun,
+            'public_holiday': public_holiday,
+            'public_holiday_previous_day': public_holiday_previous_day,
+            'total_outpatient': total_outpatient,
+            'intro_outpatient': intro_outpatient,
+            'er': er,
+            'bed_count': bed_count,
+            'y': y
+        }
+        response = supabase.table('training_data').insert(data).execute()
+        return response.data
+    except Exception as e:
+        print(f"Error adding training data: {e}")
+        return None
 
 def get_training_data():
     """トレーニングデータの取得"""
-    db_path = get_db_path()
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
+    try:
+        # ページネーションを使用してすべてのデータを取得
+        all_data = []
+        page = 0
+        while True:
+            response = supabase.table('training_data').select("*").order('date').range(page * 1000, (page + 1) * 1000 - 1).execute()
+            if not response.data:
+                break
+            all_data.extend(response.data)
+            page += 1
+            print(f"データ取得: {len(all_data)}件")  # デバッグ出力
+        return all_data
+    except Exception as e:
+        print(f"Error getting training data: {e}")
+        return []
 
-    cursor.execute('SELECT * FROM training_data ORDER BY date')
-    data = cursor.fetchall()
-
-    conn.close()
-    return data
-
-def add_model_metrics(model_name, mse, mae, r2_score):
+def add_model_metrics(date, mse, mae, prediction_count):
     """モデルの評価指標の保存"""
-    db_path = get_db_path()
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
+    try:
+        data = {
+            'date': date,
+            'mse': mse,
+            'mae': mae,
+            'prediction_count': prediction_count
+        }
+        response = supabase.table('model_metrics').insert(data).execute()
+        return response.data
+    except Exception as e:
+        print(f"Error adding model metrics: {e}")
+        return None
 
-    cursor.execute('''
-    INSERT INTO model_metrics (model_name, mse, mae, r2_score)
-    VALUES (?, ?, ?, ?)
-    ''', (model_name, mse, mae, r2_score))
-
-    conn.commit()
-    conn.close()
-
-def get_model_metrics(model_name):
+def get_model_metrics():
     """モデルの評価指標の取得"""
-    db_path = get_db_path()
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
+    try:
+        response = supabase.table('model_metrics').select("*").order('date').execute()
+        return response.data
+    except Exception as e:
+        print(f"Error getting model metrics: {e}")
+        return []
 
-    cursor.execute('SELECT * FROM model_metrics WHERE model_name = ? ORDER BY evaluation_date DESC', (model_name,))
-    metrics = cursor.fetchall()
+def save_prediction(date, predicted_value, actual_value=None):
+    """予測結果の保存"""
+    try:
+        data = {
+            'date': date,
+            'predicted_value': predicted_value,
+            'actual_value': actual_value
+        }
+        response = supabase.table('predictions').insert(data).execute()
+        return response.data
+    except Exception as e:
+        print(f"Error saving prediction: {e}")
+        return None
 
-    conn.close()
-    return metrics
+def get_predictions():
+    """予測結果の取得"""
+    try:
+        response = supabase.table('predictions').select("*").order('date').execute()
+        return response.data
+    except Exception as e:
+        print(f"Error getting predictions: {e}")
+        return []
 
-def add_inpatient_history(date, new_inpatients):
-    """新規入院患者数の履歴データを追加"""
-    db_path = get_db_path()
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
+def get_prediction_for_date(date):
+    """特定の日付の予測を取得"""
+    try:
+        response = supabase.table('predictions').select("*").eq('date', date).execute()
+        return response.data[0] if response.data else None
+    except Exception as e:
+        print(f"Error getting prediction for date: {e}")
+        return None
 
-    cursor.execute('''
-    INSERT INTO inpatient_history (date, new_inpatients)
-    VALUES (?, ?)
-    ''', (date, new_inpatients))
+def get_weekday_info(date_str):
+    """日付から曜日情報を生成"""
+    date = datetime.strptime(date_str, '%Y-%m-%d')
+    return {
+        'mon': date.weekday() == 0,
+        'tue': date.weekday() == 1,
+        'wed': date.weekday() == 2,
+        'thu': date.weekday() == 3,
+        'fri': date.weekday() == 4,
+        'sat': date.weekday() == 5,
+        'sun': date.weekday() == 6
+    }
 
-    conn.commit()
-    conn.close()
-
-def get_inpatient_history(start_date=None, end_date=None):
-    """新規入院患者数の履歴データを取得"""
-    db_path = get_db_path()
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-
-    query = 'SELECT * FROM inpatient_history'
-    params = []
+def get_holiday_info(date_str):
+    """日付から祝日情報を生成"""
+    date = datetime.strptime(date_str, '%Y-%m-%d')
+    prev_date = date - timedelta(days=1)
     
-    if start_date and end_date:
-        query += ' WHERE date BETWEEN ? AND ?'
-        params.extend([start_date, end_date])
-    
-    query += ' ORDER BY date'
-    
-    cursor.execute(query, params)
-    data = cursor.fetchall()
+    return {
+        'public_holiday': jpholiday.is_holiday(date),
+        'public_holiday_previous_day': jpholiday.is_holiday(prev_date)
+    }
 
-    conn.close()
-    return data 
+def save_input_data(data):
+    """入力データをSupabaseに保存"""
+    try:
+        # 日付を文字列に変換（既に文字列の場合はそのまま使用）
+        formatted_data = data.copy()
+        if isinstance(formatted_data['date'], str):
+            date_str = formatted_data['date']
+        else:
+            date_str = formatted_data['date'].strftime('%Y-%m-%d')
+        
+        # カラム名の修正
+        if 'er_patients' in formatted_data:
+            formatted_data['er'] = formatted_data.pop('er_patients')
+        
+        # 日付を設定
+        formatted_data['date'] = date_str
+        
+        # 曜日情報を追加
+        weekday_info = get_weekday_info(date_str)
+        formatted_data.update(weekday_info)
+        
+        # 祝日情報を追加
+        holiday_info = get_holiday_info(date_str)
+        formatted_data.update(holiday_info)
+        
+        print(f"\n保存するデータ: {formatted_data}")
+        
+        try:
+            # まず、同じ日付のデータが存在するか確認
+            existing_data = supabase.table('training_data').select("*").eq('date', formatted_data['date']).execute()
+            print(f"\n既存データの確認結果: {existing_data.data}")
+            
+            if existing_data.data:
+                print(f"警告: {formatted_data['date']}の日付のデータが既に存在します")
+                # 既存のデータを更新
+                response = supabase.table('training_data').update(formatted_data).eq('date', formatted_data['date']).execute()
+            else:
+                # 新規データを挿入
+                response = supabase.table('training_data').insert(formatted_data).execute()
+            
+            if not response:
+                print("\nSupabase response is None")
+                raise Exception("データの保存に失敗しました: レスポンスがNoneです")
+            
+            print(f"\nSupabase response details:")
+            print(f"Response object: {response}")
+            if hasattr(response, 'data'):
+                print(f"Response data: {response.data}")
+            if hasattr(response, 'error'):
+                print(f"Response error: {response.error}")
+            if hasattr(response, 'status_code'):
+                print(f"Status code: {response.status_code}")
+            
+            if not response.data:
+                raise Exception("データの保存に失敗しました: レスポンスデータが空です")
+            
+            print(f"\nデータを保存しました:")
+            print(f"Response data: {response.data}")
+            return response.data
+            
+        except Exception as e:
+            print("\nSupabase insertion error details:")
+            print(f"Error type: {type(e)}")
+            print(f"Error message: {str(e)}")
+            print(f"Error attributes: {dir(e)}")  # エラーオブジェクトの全属性を表示
+            if hasattr(e, 'response'):
+                print(f"Error response: {e.response}")
+            if hasattr(e, 'status_code'):
+                print(f"Error status code: {e.status_code}")
+            print(f"Traceback: {traceback.format_exc()}")
+            raise Exception(f"Supabaseへのデータ挿入に失敗: {str(e)}")
+            
+    except Exception as e:
+        error_msg = f"データ保存中にエラーが発生: {str(e)}"
+        print(f"\n{error_msg}")
+        print(f"Error type: {type(e)}")
+        print(f"Traceback: {traceback.format_exc()}")
+        raise Exception(error_msg) 
