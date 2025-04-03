@@ -5,47 +5,25 @@ import traceback
 import jpholiday  # 日本の祝日判定用
 import os
 
-def init_supabase() -> Client:
-    """Supabaseクライアントの初期化とテスト"""
-    try:
-        if not Config.SUPABASE_URL or not Config.SUPABASE_KEY:
-            raise ValueError("Supabase credentials not found in environment variables")
-        
-        print(f"Supabase URL: {Config.SUPABASE_URL[:20]}...")  # URLの一部のみを表示
-        
-        # クライアントの作成
-        client = create_client(
-            Config.SUPABASE_URL,
-            Config.SUPABASE_KEY
-        )
-        
-        # 接続テスト
-        try:
-            # テーブルの存在確認（training_dataテーブルを使用）
-            test_response = client.table('training_data').select("id").limit(1).execute()
-            print("Supabase connection test successful")
-            print(f"Test query response: {test_response}")
-            return client
-        except Exception as e:
-            print(f"Supabase connection test failed: {str(e)}")
-            print(f"Error type: {type(e)}")
-            print(f"Error details: {traceback.format_exc()}")
-            raise Exception(f"Failed to connect to Supabase: {str(e)}")
-            
-    except Exception as e:
-        print(f"Error initializing Supabase client: {str(e)}")
-        print(f"Error type: {type(e)}")
-        print(f"Error details: {traceback.format_exc()}")
-        raise
-
 # Supabaseクライアントの初期化
-try:
-    print("\nInitializing Supabase client...")
-    supabase = init_supabase()
-    print("Supabase client initialized successfully")
-except Exception as e:
-    print(f"Failed to initialize Supabase client: {str(e)}")
-    raise
+supabase: Client = create_client(
+    Config.SUPABASE_URL,
+    Config.SUPABASE_KEY
+)
+
+def init_database():
+    """データベースの初期化"""
+    try:
+        # テーブルの存在確認
+        response = supabase.table('hospital_data').select('id').limit(1).execute()
+        print("hospital_dataテーブルが存在します")
+    except Exception as e:
+        print("hospital_dataテーブルが存在しません。作成します...")
+        # テーブルの作成
+        with open('app/schema.sql', 'r') as f:
+            sql = f.read()
+        supabase.rpc('exec_sql', {'sql': sql}).execute()
+        print("テーブルを作成しました")
 
 def add_training_data(date, mon, tue, wed, thu, fri, sat, sun, public_holiday, public_holiday_previous_day, total_outpatient, intro_outpatient, er, bed_count, y):
     """トレーニングデータの追加"""
@@ -224,4 +202,7 @@ def save_input_data(data):
         print(f"\n{error_msg}")
         print(f"Error type: {type(e)}")
         print(f"Traceback: {traceback.format_exc()}")
-        raise Exception(error_msg) 
+        raise Exception(error_msg)
+
+# データベースの初期化
+init_database() 
