@@ -1,42 +1,39 @@
 from flask import Flask
-from config import Config, SUPABASE_URL, SUPABASE_KEY
+from config import Config
 import os
 
 def check_environment():
     """環境変数の存在を確認"""
     missing_vars = []
     
-    if not SUPABASE_URL:
-        missing_vars.append('SUPABASE_URL')
-    else:
-        print(f"SUPABASE_URL is set (length: {len(SUPABASE_URL)})")
-        
-    if not SUPABASE_KEY:
-        missing_vars.append('SUPABASE_KEY')
-    else:
-        print(f"SUPABASE_KEY is set (length: {len(SUPABASE_KEY)})")
+    supabase_url = os.getenv('SUPABASE_URL')
+    supabase_key = os.getenv('SUPABASE_KEY')
     
+    if not supabase_url:
+        missing_vars.append('SUPABASE_URL')
+    if not supabase_key:
+        missing_vars.append('SUPABASE_KEY')
+        
     if missing_vars:
         raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
     
     print("All required environment variables are set")
+    return supabase_url, supabase_key
 
 def create_app():
     """アプリケーションファクトリ"""
+    app = Flask(__name__)
+    app.config.from_object(Config)
+    
     # 環境変数の確認
-    print("\nChecking environment variables...")
-    check_environment()
+    supabase_url, supabase_key = check_environment()
     
     # テンプレートとスタティックディレクトリのパスを明示的に指定
     template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'templates'))
     static_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'static'))
     
-    app = Flask(__name__, 
-                template_folder=template_dir,
-                static_folder=static_dir)
-    
-    # 基本設定
-    app.config.from_object(Config)
+    app.config['SUPABASE_URL'] = supabase_url
+    app.config['SUPABASE_KEY'] = supabase_key
     
     # ブループリントの登録
     from app.routes import main
