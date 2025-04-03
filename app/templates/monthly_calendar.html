@@ -75,18 +75,46 @@ function updateCalendar() {
         const prediction = monthlyPredictions[date];
         
         const td = document.createElement('td');
-        td.className = 'text-center';
+        td.className = 'text-center position-relative';
         
         if (prediction) {
-            const level = prediction.level;
-            const color = prediction.color;
+            // 背景色とスタイルを設定
+            td.style.backgroundColor = prediction.color;
+            td.style.color = prediction.color === '#ffc107' ? 'black' : 'white';
+            td.style.padding = '10px';
+            td.style.borderRadius = '4px';
+            td.style.transition = 'all 0.3s ease';
             
-            td.innerHTML = `
-                <div class="p-2 bg-${color} bg-opacity-25 rounded">
-                    <div class="fw-bold">${i}</div>
-                    <div class="small text-muted">${prediction.label}</div>
+            // 日付と予測値を表示
+            let content = `
+                <div class="d-flex flex-column align-items-center">
+                    <div class="fw-bold" style="font-size: 1.2rem;">${i}</div>`;
+            
+            // 祝日の場合、祝日名を表示
+            if (prediction.is_holiday) {
+                content += `
+                    <div class="holiday-name" style="font-size: 0.7rem; color: ${prediction.color === '#ffc107' ? '#dc3545' : '#ffc107'};">
+                        ${prediction.holiday_name}
+                    </div>`;
+            }
+            
+            content += `
+                    <div style="font-size: 0.9rem;">${prediction.label}</div>
+                    <div style="font-size: 0.8rem;">${prediction.prediction}人</div>
                 </div>
             `;
+            
+            td.innerHTML = content;
+            
+            // ホバー効果
+            td.onmouseover = function() {
+                this.style.transform = 'scale(1.05)';
+                this.style.boxShadow = '0 4px 8px rgba(0,0,0,0.2)';
+            };
+            td.onmouseout = function() {
+                this.style.transform = 'scale(1)';
+                this.style.boxShadow = 'none';
+            };
         } else {
             td.textContent = i;
         }
@@ -129,5 +157,33 @@ function changeMonth(delta) {
 
 // 初期表示
 updateCalendar();
+
+// スタイルを追加
+const style = document.createElement('style');
+style.textContent = `
+    .table td {
+        padding: 8px;
+        vertical-align: middle;
+        border: 1px solid #dee2e6;
+        height: 100px;
+        width: 14.28%;
+    }
+    
+    .table th {
+        text-align: center;
+        background-color: #f8f9fa;
+        border: 1px solid #dee2e6;
+        padding: 12px;
+    }
+    
+    .badge {
+        font-size: 0.9rem;
+        padding: 8px 12px;
+        border-radius: 4px;
+        margin: 2px;
+        white-space: nowrap;
+    }
+`;
+document.head.appendChild(style);
 </script>
 {% endblock %} 

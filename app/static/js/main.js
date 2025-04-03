@@ -3,8 +3,8 @@ document.addEventListener('DOMContentLoaded', function() {
     // 数値入力フィールドの増減ボタンの設定
     document.querySelectorAll('.input-wrapper').forEach(container => {
         const input = container.querySelector('input[type="number"]');
-        const incrementBtn = container.querySelector('.increment');
-        const decrementBtn = container.querySelector('.decrement');
+        const incrementBtn = container.querySelector('.increment-btn');
+        const decrementBtn = container.querySelector('.decrement-btn');
 
         if (input && incrementBtn && decrementBtn) {
             decrementBtn.addEventListener('click', () => {
@@ -22,116 +22,132 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     // 日付表示の設定
-    const dateInput = document.getElementById('date');
-    const dateDisplay = document.querySelector('.date-display');
+    const dateInput = document.getElementById('prediction-date');
+    const weekdayDisplay = document.getElementById('weekday-display');
     
-    if (dateInput && dateDisplay) {
+    if (dateInput && weekdayDisplay) {
         // 初期値を今日の日付に設定
         const today = new Date();
         dateInput.value = today.toISOString().split('T')[0];
-        updateDateDisplay(today);
+        updateWeekdayDisplay();
 
-        dateInput.addEventListener('change', (e) => {
-            const selectedDate = new Date(e.target.value);
-            updateDateDisplay(selectedDate);
-        });
+        dateInput.addEventListener('change', updateWeekdayDisplay);
     }
 
     // 前回の入力値を復元
     restoreInputValues();
 
-    // フォームの送信処理
-    const form = document.getElementById('prediction-form');
-    if (form) {
-        form.addEventListener('submit', async function(e) {
-            e.preventDefault();
-            
-            if (!validateForm(form)) {
-                alert('すべての項目を正しく入力してください。');
+    // 予測ボタンのクリックイベント
+    document.getElementById('predict-button').addEventListener('click', async function() {
+        try {
+            // 入力値の検証
+            const dateInput = document.getElementById('prediction-date');
+            const totalOutpatientInput = document.getElementById('total-outpatient');
+            const introOutpatientInput = document.getElementById('intro-outpatient');
+            const erPatientsInput = document.getElementById('er-patients');
+            const bedCountInput = document.getElementById('bed_count');
+            const previousInpatientInput = document.getElementById('previous-inpatient');
+
+            // 必須フィールドのチェック
+            if (!dateInput.value) {
+                alert('予測日を入力してください。');
                 return;
             }
 
-            const formData = new FormData(form);
-            
-            try {
-                const response = await fetch("/predict", {
-                    method: 'POST',
-                    body: formData
-                });
-                
-                const data = await response.json();
-                
-                if (data.status === 'success') {
-                    // 予測結果を表示
-                    const resultContainer = document.getElementById('result');
-                    const predictionValue = document.getElementById('prediction-value');
-                    const weeklyChart = document.getElementById('weekly-chart');
-                    
-                    if (predictionValue) {
-                        predictionValue.textContent = data.prediction.toFixed(1);
-                    }
-                    
-                    if (weeklyChart) {
-                        try {
-                            const ctx = weeklyChart.getContext('2d');
-                            // 既存のグラフを破棄
-                            if (window.weeklyChart) {
-                                window.weeklyChart.destroy();
-                            }
-                            // 新しいグラフを作成
-                            window.weeklyChart = new Chart(ctx, {
-                                type: 'line',
-                                data: {
-                                    labels: data.weekly_predictions.map(p => p.date),
-                                    datasets: [{
-                                        label: '予測入院患者数',
-                                        data: data.weekly_predictions.map(p => p.value),
-                                        borderColor: '#0A4B73',
-                                        backgroundColor: 'rgba(10, 75, 115, 0.1)',
-                                        tension: 0.4,
-                                        fill: true
-                                    }]
-                                },
-                                options: {
-                                    responsive: true,
-                                    maintainAspectRatio: false,
-                                    plugins: {
-                                        legend: {
-                                            display: false
-                                        }
-                                    },
-                                    scales: {
-                                        y: {
-                                            beginAtZero: true,
-                                            title: {
-                                                display: true,
-                                                text: '入院患者数'
-                                            }
-                                        }
-                                    }
-                                }
-                            });
-                        } catch (chartError) {
-                            console.error('Chart error:', chartError);
-                            // グラフのエラーは致命的ではないので、エラーメッセージを表示しない
-                        }
-                    }
-                    
-                    // 結果セクションを表示
-                    if (resultContainer) {
-                        resultContainer.style.display = 'block';
-                        resultContainer.scrollIntoView({ behavior: 'smooth' });
-                    }
-                } else {
-                    alert('予測に失敗しました: ' + data.message);
-                }
-            } catch (error) {
-                console.error('Error:', error);
-                // サーバーエラーやネットワークエラーの場合のみエラーメッセージを表示
-                alert('サーバーとの通信中にエラーが発生しました。');
+            // 数値の範囲チェック
+            const formData = {
+                date: dateInput.value,
+                total_outpatient: parseInt(totalOutpatientInput.value) || 0,
+                intro_outpatient: parseInt(introOutpatientInput.value) || 0,
+                er_patients: parseInt(erPatientsInput.value) || 0,
+                bed_count: parseInt(bedCountInput.value) || 0,
+                y: parseInt(previousInpatientInput.value) || 0  // 前日の新規入院患者数
+            };
+
+            // 値の範囲チェック
+            if (formData.total_outpatient < 0 || formData.total_outpatient > 2000) {
+                alert('外来患者数は0から2000の間で入力してください。');
+                return;
             }
-        });
-    }
+            if (formData.intro_outpatient < 0 || formData.intro_outpatient > 200) {
+                alert('紹介患者数は0から200の間で入力してください。');
+                return;
+            }
+            if (formData.er_patients < 0 || formData.er_patients > 100) {
+                alert('救急搬送患者数は0から100の間で入力してください。');
+                return;
+            }
+            if (formData.bed_count < 0 || formData.bed_count > 1000) {
+                alert('入院患者数は0から1000の間で入力してください。');
+                return;
+            }
+            if (formData.y < 0 || formData.y > 100) {
+                alert('前日の新規入院患者数は0から100の間で入力してください。');
+                return;
+            }
+
+            console.log('送信するデータ:', formData);  // デバッグ出力
+
+            // Content-Typeを明示的に指定
+            const response = await fetch('/predict', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                body: JSON.stringify(formData)
+            });
+
+            const result = await response.json();
+            console.log('予測レスポンス:', result);
+
+            if (result.status === 'error') {
+                console.error('予測エラー:', result);
+                let errorMessage = result.message || '予測の実行中にエラーが発生しました。';
+                alert(errorMessage);
+                return;
+            }
+
+            // 予測結果の表示
+            const resultDiv = document.getElementById('prediction-result');
+            const dailyPrediction = document.getElementById('daily-prediction');
+            
+            if (result.prediction !== undefined && dailyPrediction) {
+                dailyPrediction.textContent = `${result.prediction.toFixed(1)}人`;
+                resultDiv.style.display = 'block';
+
+                // 週間予測の取得と表示
+                try {
+                    const weeklyResponse = await fetch('/predict/weekly', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            date: formData.date,
+                            bed_count: formData.bed_count
+                        })
+                    });
+
+                    const weeklyResult = await weeklyResponse.json();
+                    console.log('週間予測レスポンス:', weeklyResult);
+
+                    if (weeklyResult.status === 'success' && weeklyResult.predictions) {
+                        drawWeeklyPredictionChart(weeklyResult.predictions);
+                    } else {
+                        throw new Error(weeklyResult.message || '週間予測の取得に失敗しました。');
+                    }
+                } catch (error) {
+                    console.error('週間予測エラー:', error);
+                    alert('週間予測の取得中にエラーが発生しました: ' + error.message);
+                }
+            }
+        } catch (error) {
+            console.error('予測実行エラー:', error);
+            alert('予測の実行中にエラーが発生しました: ' + error.message);
+        }
+    });
 });
 
 // 日付表示の更新
@@ -183,4 +199,43 @@ function restoreInputValues() {
             }
         });
     }
+}
+
+// フォームデータの準備
+const formData = {
+    date: document.getElementById('prediction-date').value,
+    total_outpatient: parseInt(document.getElementById('total-outpatient').value),
+    intro_outpatient: parseInt(document.getElementById('intro-outpatient').value),
+    er_patients: parseInt(document.getElementById('er-patients').value),
+    bed_count: parseInt(document.getElementById('bed-count').value),
+    y: parseInt(document.getElementById('y').value)  // 前日の新規入院患者数
+};
+
+// バリデーション
+if (!formData.date || isNaN(formData.total_outpatient) || isNaN(formData.intro_outpatient) || 
+    isNaN(formData.er_patients) || isNaN(formData.bed_count) || isNaN(formData.y)) {
+    alert('すべての項目を入力してください');
+    return;
+}
+
+// 値の範囲チェック
+if (formData.total_outpatient < 0 || formData.total_outpatient > 2000) {
+    alert('外来患者数は0から2000の間で入力してください');
+    return;
+}
+if (formData.intro_outpatient < 0 || formData.intro_outpatient > 200) {
+    alert('紹介患者数は0から200の間で入力してください');
+    return;
+}
+if (formData.er_patients < 0 || formData.er_patients > 100) {
+    alert('救急搬送患者数は0から100の間で入力してください');
+    return;
+}
+if (formData.bed_count < 0 || formData.bed_count > 1000) {
+    alert('入院患者数は0から1000の間で入力してください');
+    return;
+}
+if (formData.y < 0 || formData.y > 100) {
+    alert('前日の新規入院患者数は0から100の間で入力してください');
+    return;
 } 

@@ -2,6 +2,88 @@
 
 {% block head %}
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+<style>
+    .prediction-note {
+        color: #dc3545;
+        font-weight: bold;
+        margin: 1.5rem 0;
+        padding: 1.2rem;
+        border-radius: 8px;
+        background-color: rgba(220, 53, 69, 0.1);
+        border: 2px solid #dc3545;
+        box-shadow: 0 2px 4px rgba(220, 53, 69, 0.2);
+        font-size: 1.1rem;
+        text-align: center;
+    }
+    
+    .prediction-note i {
+        margin-right: 8px;
+        font-size: 1.2rem;
+    }
+    
+    .result-content {
+        display: flex;
+        flex-direction: column;
+        gap: 2rem;
+    }
+    
+    .result-card {
+        background: #fff;
+        padding: 2rem;
+        border-radius: 12px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        transition: all 0.3s ease;
+    }
+    
+    .result-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+    }
+    
+    .prediction-value {
+        font-size: 3rem;
+        font-weight: bold;
+        color: #0056b3;
+        margin: 1.5rem 0;
+        text-align: center;
+    }
+    
+    #weekly-prediction-chart {
+        width: 100%;
+        height: 400px;
+        margin-top: 1.5rem;
+    }
+    
+    .card h4 {
+        color: #2c3e50;
+        font-weight: 600;
+        margin-bottom: 1.5rem;
+        text-align: center;
+    }
+
+    .prediction-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 20px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    }
+
+    .prediction-table th,
+    .prediction-table td {
+        padding: 12px;
+        text-align: center;
+        border: 1px solid #ddd;
+    }
+
+    .prediction-table th {
+        background-color: #f5f5f5;
+        font-weight: bold;
+    }
+
+    .prediction-table tr:hover {
+        background-color: #f9f9f9;
+    }
+</style>
 {% endblock %}
 
 {% block content %}
@@ -9,6 +91,11 @@
     <div class="card mb-4">
         <div class="card-body">
             <div class="prediction-form">
+                <!-- 予測精度の注意書き -->
+                <div class="prediction-note">
+                    <i class="fas fa-info-circle"></i> 当日予測の方が週間予測より精度が高いため、当日の予測を優先してご利用ください。
+                </div>
+
                 <!-- 日付入力（中央配置） -->
                 <div class="form-group date-group">
                     <label for="prediction-date">予測日</label>
@@ -56,12 +143,23 @@
                     </div>
 
                     <div class="form-group">
-                        <label for="bed-count">現在の入院患者数</label>
+                        <label for="bed_count">現在の入院患者数</label>
                         <div class="input-wrapper">
-                            <input type="number" id="bed-count" class="form-control" value="300" required>
+                            <input type="number" id="bed_count" class="form-control" value="300" min="0" max="1000" required>
                             <div class="input-controls">
-                                <button type="button" class="increment-btn" onclick="incrementValue('bed-count')">+</button>
-                                <button type="button" class="decrement-btn" onclick="decrementValue('bed-count')">-</button>
+                                <button type="button" class="increment-btn" onclick="incrementValue('bed_count')">+</button>
+                                <button type="button" class="decrement-btn" onclick="decrementValue('bed_count')">-</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="previous-inpatient">前日の新規入院患者数</label>
+                        <div class="input-wrapper">
+                            <input type="number" id="previous-inpatient" class="form-control" value="27" min="0" max="100" required>
+                            <div class="input-controls">
+                                <button type="button" class="increment-btn" onclick="incrementValue('previous-inpatient')">+</button>
+                                <button type="button" class="decrement-btn" onclick="decrementValue('previous-inpatient')">-</button>
                             </div>
                         </div>
                     </div>
@@ -74,18 +172,18 @@
             </div>
 
             <div id="prediction-result" class="mt-4" style="display: none;">
-                <h3>予測結果</h3>
+                <h3 class="mb-4">予測結果</h3>
                 <div class="result-content">
                     <div class="result-card">
                         <h4>当日の予測入院患者数</h4>
                         <div id="daily-prediction" class="prediction-value">-</div>
-                        <div class="text-muted small mt-2">
-                            <i class="fas fa-info-circle"></i> 予測値は入力値に基づいて計算されます
+                        <div class="text-danger fw-bold mt-2">
+                            <i class="fas fa-info-circle"></i> 当日予測の方が週間予測より精度が高いです
                         </div>
                     </div>
                     <div class="result-card">
                         <h4>週間予測</h4>
-                        <div id="weekly-prediction-chart" style="width: 100%; height: 400px;"></div>
+                        <div id="weekly-prediction-chart"></div>
                     </div>
                 </div>
             </div>
@@ -106,44 +204,164 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // 予測ボタンのクリックイベント
     document.getElementById('predict-button').addEventListener('click', async function() {
-        const formData = {
-            prediction_date: document.getElementById('prediction-date').value,
-            total_outpatient: document.getElementById('total-outpatient').value,
-            intro_outpatient: document.getElementById('intro-outpatient').value,
-            er_patients: document.getElementById('er-patients').value,
-            bed_count: document.getElementById('bed-count').value
-        };
-
         try {
-            const response = await fetch("{{ url_for('main.predict') }}", {
+            // 入力値の検証
+            const dateInput = document.getElementById('prediction-date');
+            const totalOutpatientInput = document.getElementById('total-outpatient');
+            const introOutpatientInput = document.getElementById('intro-outpatient');
+            const erPatientsInput = document.getElementById('er-patients');
+            const bedCountInput = document.getElementById('bed_count');
+
+            // 必須フィールドのチェック
+            if (!dateInput.value) {
+                alert('予測日を入力してください。');
+                return;
+            }
+
+            // 数値の範囲チェック
+            const formData = {
+                date: dateInput.value,
+                total_outpatient: parseInt(totalOutpatientInput.value) || 0,
+                intro_outpatient: parseInt(introOutpatientInput.value) || 0,
+                er_patients: parseInt(erPatientsInput.value) || 0,
+                bed_count: parseInt(bedCountInput.value) || 0,
+                y: parseInt(document.getElementById('previous-inpatient').value) || 0  // 前日の新規入院患者数
+            };
+
+            // 値の範囲チェック
+            if (formData.total_outpatient < 0 || formData.total_outpatient > 2000) {
+                alert('外来患者数は0から2000の間で入力してください。');
+                return;
+            }
+            if (formData.intro_outpatient < 0 || formData.intro_outpatient > 200) {
+                alert('紹介患者数は0から200の間で入力してください。');
+                return;
+            }
+            if (formData.er_patients < 0 || formData.er_patients > 100) {
+                alert('救急搬送患者数は0から100の間で入力してください。');
+                return;
+            }
+            if (formData.bed_count < 0 || formData.bed_count > 1000) {
+                alert('入院患者数は0から1000の間で入力してください。');
+                return;
+            }
+
+            console.log('送信するデータ:', formData);  // デバッグ出力
+
+            // Content-Typeを明示的に指定
+            const response = await fetch('/predict', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
+                    'Accept': 'application/json'
                 },
                 body: JSON.stringify(formData)
             });
 
             const result = await response.json();
-            const resultDiv = document.getElementById('prediction-result');
+            console.log('予測レスポンス:', result);
 
-            if (result.status === 'success') {
-                // 予測結果の表示（小数点第一位まで）
+            if (result.status === 'error') {
+                console.error('予測エラー:', result);
+                let errorMessage = result.message || '予測の実行中にエラーが発生しました。';
+                
+                // エラーの種類に応じた詳細情報の表示
+                if (result.error_type) {
+                    console.log('エラータイプ:', result.error_type);
+                    switch (result.error_type) {
+                        case 'missing_fields':
+                            errorMessage += `\n不足しているフィールド: ${result.missing_fields.join(', ')}`;
+                            break;
+                        case 'validation_error':
+                            errorMessage += '\n入力値が範囲外です。';
+                            break;
+                        case 'type_conversion_error':
+                            errorMessage += '\nデータの型が正しくありません。';
+                            break;
+                        case 'prediction_error':
+                            errorMessage += '\n予測モデルでエラーが発生しました。';
+                            break;
+                    }
+                }
+
+                // デバッグモードの場合、詳細情報を表示
+                if (result.error_details) {
+                    console.error('エラー詳細:', result.error_details);
+                }
+                if (result.stack_trace) {
+                    console.error('スタックトレース:', result.stack_trace);
+                }
+                if (result.received_data) {
+                    console.log('受信したデータ:', result.received_data);
+                }
+
+                // エラーメッセージをユーザーに表示
+                alert(errorMessage);
+                return;
+            }
+
+            const resultDiv = document.getElementById('prediction-result');
+            
+            if (result.prediction !== undefined) {
                 document.getElementById('daily-prediction').textContent = 
                     `${result.prediction.toFixed(1)}人`;
-                
-                // 週間予測グラフの描画
-                if (result.weekly_predictions) {
-                    drawWeeklyPredictionChart(result.weekly_predictions);
+
+                // 週間予測の取得
+                try {
+                    const weeklyResponse = await fetch('/predict/weekly', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            date: formData.date,
+                            bed_count: formData.bed_count
+                        })
+                    });
+
+                    const weeklyResult = await weeklyResponse.json();
+                    console.log('週間予測レスポンス:', weeklyResult);
+
+                    if (weeklyResult.status === 'error') {
+                        console.error('週間予測エラー:', weeklyResult);
+                        let errorMessage = weeklyResult.message || '週間予測の取得中にエラーが発生しました。';
+                        
+                        if (weeklyResult.error_type) {
+                            switch (weeklyResult.error_type) {
+                                case 'missing_fields':
+                                    errorMessage += `\n不足しているフィールド: ${weeklyResult.missing_fields.join(', ')}`;
+                                    break;
+                                case 'validation_error':
+                                    errorMessage += '\n入力値が範囲外です。';
+                                    break;
+                                case 'type_conversion_error':
+                                    errorMessage += '\nデータの型が正しくありません。';
+                                    break;
+                                case 'prediction_error':
+                                    errorMessage += '\n予測モデルでエラーが発生しました。';
+                                    break;
+                            }
+                        }
+
+                        throw new Error(errorMessage);
+                    }
+
+                    if (weeklyResult.predictions && weeklyResult.predictions.length > 0) {
+                        drawWeeklyPredictionChart(weeklyResult.predictions);
+                        resultDiv.style.display = 'block';
+                    } else {
+                        throw new Error('週間予測データが不正です。');
+                    }
+                } catch (error) {
+                    console.error('週間予測エラー詳細:', error);
+                    alert('週間予測の取得中にエラーが発生しました: ' + error.message);
                 }
-                
-                resultDiv.style.display = 'block';
-            } else {
-                alert(result.message || '予測の実行中にエラーが発生しました。');
             }
 
         } catch (error) {
-            console.error('Error:', error);
-            alert('予測の実行中にエラーが発生しました。');
+            console.error('予測実行エラー:', error);
+            alert('予測の実行中にエラーが発生しました: ' + error.message);
         }
     });
 });
@@ -175,57 +393,175 @@ function decrementValue(inputId) {
 
 // 週間予測グラフの描画
 function drawWeeklyPredictionChart(weeklyData) {
-    const dates = weeklyData.map(item => item.date);
-    const values = weeklyData.map(item => item.value);
-    const lowerBounds = weeklyData.map(item => item.lower_bound);
-    const upperBounds = weeklyData.map(item => item.upper_bound);
+    console.log('週間予測データ:', weeklyData);  // デバッグ出力
+    
+    const dates = weeklyData.map(d => d.date);
+    const values = weeklyData.map(d => d.value);
+    const labels = weeklyData.map(d => d.label);
+    const colors = weeklyData.map(d => d.color);
+    
+    // 日付の表示形式を日本語に変換
+    const formattedDates = dates.map(dateStr => {
+        const date = new Date(dateStr);
+        return date.toLocaleDateString('ja-JP', { 
+            weekday: 'short', 
+            month: 'numeric',
+            day: 'numeric'
+        });
+    });
 
-    const trace1 = {
-        x: dates,
+    const trace = {
+        x: formattedDates,
         y: values,
         type: 'scatter',
         mode: 'lines+markers',
-        name: '予測値',
         line: {
-            color: '#FFD700',
-            width: 2
+            color: '#2E86C1',
+            width: 3,
+            shape: 'spline'
         },
         marker: {
-            size: 8
-        }
-    };
-
-    const trace2 = {
-        x: dates.concat(dates.slice().reverse()),
-        y: upperBounds.concat(lowerBounds.slice().reverse()),
-        fill: 'toself',
-        fillcolor: 'rgba(255, 215, 0, 0.2)',
-        line: {
-            color: 'transparent'
+            size: 10,
+            color: colors,
+            symbol: 'circle',
+            line: {
+                color: '#fff',
+                width: 2
+            }
         },
-        name: '95%信頼区間',
-        showlegend: true
+        hovertemplate: '%{y:.1f}人<br>%{x}<extra></extra>'
     };
 
     const layout = {
-        title: '週間予測推移',
+        title: {
+            text: '週間予測推移',
+            font: {
+                size: 24,
+                color: '#2c3e50'
+            },
+            y: 0.95
+        },
         xaxis: {
             title: '日付',
-            tickformat: '%m/%d'
+            tickfont: {
+                size: 12
+            },
+            gridcolor: '#f8f9fa'
         },
         yaxis: {
-            title: '予測入院患者数'
+            title: '予測入院患者数',
+            ticksuffix: '人',
+            tickfont: {
+                size: 12
+            },
+            gridcolor: '#f8f9fa',
+            range: [
+                Math.floor(Math.min(...values) * 0.9),
+                Math.ceil(Math.max(...values) * 1.1)
+            ]
         },
         margin: {
-            l: 50,
-            r: 50,
-            b: 50,
-            t: 50,
+            l: 60,
+            r: 40,
+            b: 60,
+            t: 80,
             pad: 4
+        },
+        paper_bgcolor: 'white',
+        plot_bgcolor: 'white',
+        showlegend: false,
+        hovermode: 'x unified',
+        hoverlabel: {
+            bgcolor: '#FFF',
+            font: {
+                size: 14
+            }
         }
     };
 
-    Plotly.newPlot('weekly-prediction-chart', [trace2, trace1], layout);
+    const config = {
+        responsive: true,
+        displayModeBar: false
+    };
+
+    Plotly.newPlot('weekly-prediction-chart', [trace], layout, config);
 }
+
+// 週間予測の実行
+document.getElementById('predict-weekly-btn').addEventListener('click', async function() {
+    try {
+        const date = document.getElementById('prediction-date').value;
+        const bed_count = parseInt(document.getElementById('bed-count').value);
+
+        if (!date) {
+            alert('日付を入力してください');
+            return;
+        }
+
+        if (isNaN(bed_count) || bed_count < 0 || bed_count > 1000) {
+            alert('入院患者数は0から1000の間で入力してください');
+            return;
+        }
+
+        const response = await fetch('/predict/weekly', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            },
+            body: JSON.stringify({
+                date: date,
+                bed_count: bed_count
+            })
+        });
+
+        const result = await response.json();
+        console.log('週間予測結果:', result);
+
+        if (result.status === 'success') {
+            const weeklyPredictionDiv = document.getElementById('weekly-prediction-result');
+            weeklyPredictionDiv.innerHTML = '';
+
+            // 予測結果のテーブルを作成
+            const table = document.createElement('table');
+            table.className = 'prediction-table';
+            
+            // ヘッダー行
+            const headerRow = table.insertRow();
+            ['日付', '予測値', '混雑レベル'].forEach(text => {
+                const th = document.createElement('th');
+                th.textContent = text;
+                headerRow.appendChild(th);
+            });
+
+            // データ行
+            result.predictions.forEach(prediction => {
+                const row = table.insertRow();
+                
+                // 日付
+                const dateCell = row.insertCell();
+                dateCell.textContent = prediction.date;
+                
+                // 予測値
+                const valueCell = row.insertCell();
+                valueCell.textContent = prediction.value;
+                
+                // 混雑レベル
+                const levelCell = row.insertCell();
+                levelCell.textContent = prediction.label;
+                levelCell.style.backgroundColor = prediction.color;
+                levelCell.style.color = prediction.color === '#ffeb3b' ? 'black' : 'white';
+            });
+
+            weeklyPredictionDiv.appendChild(table);
+        } else {
+            console.error('予測エラー:', result);
+            alert(`予測に失敗しました: ${result.message}`);
+        }
+    } catch (error) {
+        console.error('エラー:', error);
+        alert('予測の実行中にエラーが発生しました');
+    }
+});
 </script>
 {% endblock %} 

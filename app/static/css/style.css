@@ -63,6 +63,15 @@ header {
     margin-bottom: 0.5rem;
 }
 
+.header-title {
+    color: white;
+    font-weight: 800;
+    font-family: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", "Hiragino Sans", Meiryo, sans-serif;
+    font-size: 2.2rem;
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+    margin-bottom: 0.5rem;
+}
+
 .subtitle {
     font-size: 1rem;
     opacity: 0.9;
@@ -647,4 +656,11 @@ main {
 
 .calendar-day.other-month .day-number {
     color: #9e9e9e;
+}
+
+.bed-text {
+    color: white;
+    font-weight: bold;
+    margin-left: 5px;
+    font-size: 1.1em;
 } 
