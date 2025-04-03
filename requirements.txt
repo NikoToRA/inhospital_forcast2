@@ -11,4 +11,5 @@ prophet>=1.1.4
 supabase>=2.3.0
 python-dotenv>=1.0.0
 jpholiday==1.0.1
-requests>=2.31.0 
+requests>=2.31.0
+pytz>=2024.1 

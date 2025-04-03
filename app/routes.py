@@ -11,6 +11,7 @@ import joblib
 from prophet import Prophet
 import jpholiday
 from .database import get_training_data, add_model_metrics, save_input_data
+import pytz
 
 main = Blueprint('main', __name__)
 
@@ -55,9 +56,15 @@ def get_default_values(date):
         'bed_count': 300
     }
 
+def get_japanese_time():
+    """現在の日本時間を取得"""
+    jst = pytz.timezone('Asia/Tokyo')
+    return datetime.now(jst)
+
 @main.route('/')
 def index():
-    return render_template('index.html')
+    today = get_japanese_time().strftime('%Y-%m-%d')
+    return render_template('index.html', today=today)
 
 @main.route('/monthly_calendar')
 def monthly_calendar():

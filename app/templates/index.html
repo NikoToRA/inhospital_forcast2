@@ -196,10 +196,9 @@
 <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
 <script>
 document.addEventListener('DOMContentLoaded', function() {
-    // 今日の日付をデフォルトとして設定
-    const today = new Date();
+    // サーバーから渡された日本時間をデフォルトとして設定
     const dateInput = document.getElementById('prediction-date');
-    dateInput.value = today.toISOString().split('T')[0];
+    dateInput.value = '{{ today }}';
     updateWeekdayDisplay();
     
     // 予測ボタンのクリックイベント
