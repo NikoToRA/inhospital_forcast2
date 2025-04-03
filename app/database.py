@@ -15,10 +15,10 @@ def init_database():
     """データベースの初期化"""
     try:
         # テーブルの存在確認
-        response = supabase.table('hospital_data').select('id').limit(1).execute()
-        print("hospital_dataテーブルが存在します")
+        response = supabase.table('training_data').select('id').limit(1).execute()
+        print("training_dataテーブルが存在します")
     except Exception as e:
-        print("hospital_dataテーブルが存在しません。作成します...")
+        print("training_dataテーブルが存在しません。作成します...")
         # テーブルの作成
         with open('app/schema.sql', 'r') as f:
             sql = f.read()
@@ -53,7 +53,7 @@ def add_training_data(date, mon, tue, wed, thu, fri, sat, sun, public_holiday, p
 
 def get_training_data():
     """トレーニングデータを取得"""
-    response = supabase.table('hospital_data').select('*').execute()
+    response = supabase.table('training_data').select('*').execute()
     return response.data
 
 def add_model_metrics(metrics):
